@@ -982,6 +982,7 @@ func newBasicScrapeLoopWithFallback(t testing.TB, ctx context.Context, scraper s
 		false,
 		false,
 		false,
+		false,
 		true,
 		nil,
 		false,
@@ -1130,6 +1131,7 @@ func TestScrapeLoopRun(t *testing.T) {
 		false,
 		false,
 		false,
+		false,
 		nil,
 		false,
 		scrapeMetrics,
@@ -1157,7 +1159,7 @@ func TestScrapeLoopRun(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		require.FailNow(t, "Cancellation during initial offset failed.")
 	case err := <-errc:
-		require.FailNow(t, "Unexpected error: %s", err)
+		require.FailNow(t, "Unexpected error", "err: %s", err)
 	}
 
 	// The provided timeout must cause cancellation of the context passed down to the
@@ -1200,7 +1202,7 @@ func TestScrapeLoopRun(t *testing.T) {
 	case <-signal:
 		// Loop terminated as expected.
 	case err := <-errc:
-		require.FailNow(t, "Unexpected error: %s", err)
+		require.FailNow(t, "Unexpected error", "err: %s", err)
 	case <-time.After(3 * time.Second):
 		require.FailNow(t, "Loop did not terminate on context cancellation")
 	}
@@ -1278,6 +1280,7 @@ func TestScrapeLoopMetadata(t *testing.T) {
 		false,
 		false,
 		false,
+		false,
 		nil,
 		false,
 		scrapeMetrics,
@@ -1309,14 +1312,14 @@ test_metric_total 1
 	md, ok = cache.GetMetadata("test_metric_no_help")
 	require.True(t, ok, "expected metadata to be present")
 	require.Equal(t, model.MetricTypeGauge, md.Type, "unexpected metric type")
-	require.Equal(t, "", md.Help)
-	require.Equal(t, "", md.Unit)
+	require.Empty(t, md.Help)
+	require.Empty(t, md.Unit)
 
 	md, ok = cache.GetMetadata("test_metric_no_type")
 	require.True(t, ok, "expected metadata to be present")
 	require.Equal(t, model.MetricTypeUnknown, md.Type, "unexpected metric type")
 	require.Equal(t, "other help text", md.Help)
-	require.Equal(t, "", md.Unit)
+	require.Empty(t, md.Unit)
 }
 
 func simpleTestScrapeLoop(t testing.TB) (context.Context, *scrapeLoop) {
@@ -1567,7 +1570,7 @@ func TestSetOptionsHandlingStaleness(t *testing.T) {
 			if numScrapes == cue {
 				action(sl)
 			}
-			w.Write([]byte(fmt.Sprintf("metric_a{a=\"1\",b=\"1\"} %d\n", 42+numScrapes)))
+			fmt.Fprintf(w, "metric_a{a=\"1\",b=\"1\"} %d\n", 42+numScrapes)
 			return nil
 		}
 		sl.run(nil)
@@ -2005,7 +2008,7 @@ func TestScrapeLoopAppendCacheEntryButErrNotFound(t *testing.T) {
 	fakeRef := storage.SeriesRef(1)
 	expValue := float64(1)
 	metric := []byte(`metric{n="1"} 1`)
-	p, warning := textparse.New(metric, "text/plain", "", false, false, labels.NewSymbolTable())
+	p, warning := textparse.New(metric, "text/plain", "", false, false, false, labels.NewSymbolTable())
 	require.NotNil(t, p)
 	require.NoError(t, warning)
 
@@ -4259,7 +4262,7 @@ test_summary_count 199
 			foundLeValues[v] = true
 		}
 
-		require.Equal(t, len(expectedValues), len(foundLeValues), "number of label values not as expected")
+		require.Len(t, foundLeValues, len(expectedValues), "number of label values not as expected")
 		for _, v := range expectedValues {
 			require.Contains(t, foundLeValues, v, "label value not found")
 		}
@@ -4568,7 +4571,7 @@ metric: <
 			foundLeValues[v] = true
 		}
 
-		require.Equal(t, len(expectedValues), len(foundLeValues), "unexpected number of label values, expected %v but found %v", expectedValues, foundLeValues)
+		require.Len(t, foundLeValues, len(expectedValues), "unexpected number of label values, expected %v but found %v", expectedValues, foundLeValues)
 		for _, v := range expectedValues {
 			require.Contains(t, foundLeValues, v, "label value not found")
 		}
@@ -4635,26 +4638,26 @@ metric: <
 	fals := false
 	for metricsTextName, metricsText := range metricsTexts {
 		for name, tc := range map[string]struct {
-			alwaysScrapeClassicHistograms bool
+			alwaysScrapeClassicHistograms *bool
 			convertClassicHistToNHCB      *bool
 		}{
 			"convert with scrape": {
-				alwaysScrapeClassicHistograms: true,
+				alwaysScrapeClassicHistograms: &tru,
 				convertClassicHistToNHCB:      &tru,
 			},
 			"convert without scrape": {
-				alwaysScrapeClassicHistograms: false,
+				alwaysScrapeClassicHistograms: &fals,
 				convertClassicHistToNHCB:      &tru,
 			},
 			"scrape without convert": {
-				alwaysScrapeClassicHistograms: true,
+				alwaysScrapeClassicHistograms: &tru,
 				convertClassicHistToNHCB:      &fals,
 			},
 			"scrape with nil convert": {
-				alwaysScrapeClassicHistograms: true,
+				alwaysScrapeClassicHistograms: &tru,
 			},
 			"neither scrape nor convert": {
-				alwaysScrapeClassicHistograms: false,
+				alwaysScrapeClassicHistograms: &fals,
 				convertClassicHistToNHCB:      &fals,
 			},
 		} {
@@ -4664,7 +4667,7 @@ metric: <
 				expectedNativeHistCount = 1
 				expectCustomBuckets = false
 				expectedClassicHistCount = 0
-				if metricsText.hasClassic && tc.alwaysScrapeClassicHistograms {
+				if metricsText.hasClassic && tc.alwaysScrapeClassicHistograms != nil && *tc.alwaysScrapeClassicHistograms {
 					expectedClassicHistCount = 1
 				}
 			} else if metricsText.hasClassic {
@@ -4672,11 +4675,11 @@ metric: <
 				case tc.convertClassicHistToNHCB == nil || !*tc.convertClassicHistToNHCB:
 					expectedClassicHistCount = 1
 					expectedNativeHistCount = 0
-				case tc.alwaysScrapeClassicHistograms && *tc.convertClassicHistToNHCB:
+				case tc.alwaysScrapeClassicHistograms != nil && *tc.alwaysScrapeClassicHistograms && *tc.convertClassicHistToNHCB:
 					expectedClassicHistCount = 1
 					expectedNativeHistCount = 1
 					expectCustomBuckets = true
-				case !tc.alwaysScrapeClassicHistograms && *tc.convertClassicHistToNHCB:
+				case (tc.alwaysScrapeClassicHistograms == nil || !*tc.alwaysScrapeClassicHistograms) && *tc.convertClassicHistToNHCB:
 					expectedClassicHistCount = 0
 					expectedNativeHistCount = 1
 					expectCustomBuckets = true
@@ -4797,6 +4800,91 @@ metric: <
 	}
 }
 
+func TestTypeUnitReLabel(t *testing.T) {
+	simpleStorage := teststorage.New(t)
+	defer simpleStorage.Close()
+
+	config := &config.ScrapeConfig{
+		JobName: "test",
+		MetricRelabelConfigs: []*relabel.Config{
+			{
+				SourceLabels: model.LabelNames{"__name__"},
+				Regex:        relabel.MustNewRegexp(".*_total$"),
+				Replacement:  "counter",
+				TargetLabel:  "__type__",
+				Action:       relabel.Replace,
+			},
+			{
+				SourceLabels: model.LabelNames{"__name__"},
+				Regex:        relabel.MustNewRegexp(".*_bytes$"),
+				Replacement:  "bytes",
+				TargetLabel:  "__unit__",
+				Action:       relabel.Replace,
+			},
+		},
+		SampleLimit:                100,
+		Scheme:                     "http",
+		ScrapeInterval:             model.Duration(100 * time.Millisecond),
+		ScrapeTimeout:              model.Duration(100 * time.Millisecond),
+		MetricNameValidationScheme: config.UTF8ValidationConfig,
+		MetricNameEscapingScheme:   model.AllowUTF8,
+	}
+
+	metricsText := `
+# HELP test_metric_1_total This is a counter
+# TYPE test_metric_1_total counter
+test_metric_1_total 123
+
+# HELP test_metric_2_total This is a counter
+# TYPE test_metric_2_total counter
+test_metric_2_total 234
+
+# HELP disk_usage_bytes This is a gauge
+# TYPE disk_usage_bytes gauge
+disk_usage_bytes 456
+`
+
+	ts, scrapedTwice := newScrapableServer(metricsText)
+	defer ts.Close()
+
+	sp, err := newScrapePool(config, simpleStorage, 0, nil, nil, &Options{}, newTestScrapeMetrics(t))
+	require.NoError(t, err)
+	defer sp.stop()
+
+	testURL, err := url.Parse(ts.URL)
+	require.NoError(t, err)
+	sp.Sync([]*targetgroup.Group{
+		{
+			Targets: []model.LabelSet{{model.AddressLabel: model.LabelValue(testURL.Host)}},
+		},
+	})
+	require.Len(t, sp.ActiveTargets(), 1)
+
+	select {
+	case <-time.After(5 * time.Second):
+		t.Fatalf("target was not scraped")
+	case <-scrapedTwice:
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	q, err := simpleStorage.Querier(time.Time{}.UnixNano(), time.Now().UnixNano())
+	require.NoError(t, err)
+	defer q.Close()
+
+	series := q.Select(ctx, false, nil, labels.MustNewMatcher(labels.MatchRegexp, "__name__", ".*_total$"))
+	for series.Next() {
+		s := series.At()
+		require.Equal(t, "counter", s.Labels().Get("__type__"))
+	}
+
+	series = q.Select(ctx, false, nil, labels.MustNewMatcher(labels.MatchRegexp, "__name__", "disk_usage_bytes"))
+	for series.Next() {
+		s := series.At()
+		require.Equal(t, "bytes", s.Labels().Get("__unit__"))
+	}
+}
+
 func TestScrapeLoopRunCreatesStaleMarkersOnFailedScrapeForTimestampedMetrics(t *testing.T) {
 	appender := &collectResultAppender{}
 	var (
@@ -4817,7 +4905,7 @@ func TestScrapeLoopRunCreatesStaleMarkersOnFailedScrapeForTimestampedMetrics(t *
 
 		switch numScrapes {
 		case 1:
-			w.Write([]byte(fmt.Sprintf("metric_a 42 %d\n", time.Now().UnixNano()/int64(time.Millisecond))))
+			fmt.Fprintf(w, "metric_a 42 %d\n", time.Now().UnixNano()/int64(time.Millisecond))
 			return nil
 		case 5:
 			cancel()
@@ -4867,7 +4955,7 @@ func TestScrapeLoopCompression(t *testing.T) {
 
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				require.Equal(t, tc.acceptEncoding, r.Header.Get("Accept-Encoding"), "invalid value of the Accept-Encoding header")
-				fmt.Fprint(w, metricsText)
+				fmt.Fprint(w, string(metricsText))
 				close(scraped)
 			}))
 			defer ts.Close()
@@ -5164,7 +5252,7 @@ scrape_configs:
 
 	s := teststorage.New(t)
 	defer s.Close()
-	s.DB.EnableNativeHistograms()
+	s.EnableNativeHistograms()
 	reg := prometheus.NewRegistry()
 
 	mng, err := NewManager(&Options{DiscoveryReloadInterval: model.Duration(10 * time.Millisecond), EnableNativeHistogramsIngestion: true}, nil, nil, s, reg)

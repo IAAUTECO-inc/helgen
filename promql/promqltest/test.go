@@ -117,8 +117,12 @@ func RunBuiltinTests(t TBRun, engine promql.QueryEngine) {
 
 // RunBuiltinTestsWithStorage runs an acceptance test suite against the provided engine and storage.
 func RunBuiltinTestsWithStorage(t TBRun, engine promql.QueryEngine, newStorage func(testutil.T) storage.Storage) {
-	t.Cleanup(func() { parser.EnableExperimentalFunctions = false })
+	t.Cleanup(func() {
+		parser.EnableExperimentalFunctions = false
+		parser.ExperimentalDurationExpr = false
+	})
 	parser.EnableExperimentalFunctions = true
+	parser.ExperimentalDurationExpr = true
 
 	files, err := fs.Glob(testsFs, "*/*.test")
 	require.NoError(t, err)
@@ -267,7 +271,7 @@ func parseExpect(defLine string) (expectCmdType, expectCmd, error) {
 	expectParts := patExpect.FindStringSubmatch(strings.TrimSpace(defLine))
 	expCmd := expectCmd{}
 	if expectParts == nil {
-		return 0, expCmd, errors.New("invalid expect statement, must match `expect <type> <match_type> <string>` format")
+		return 0, expCmd, errors.New("invalid expect statement, must match `expect <type> <match_type>: <string>` format")
 	}
 	var (
 		mode            = expectParts[1]

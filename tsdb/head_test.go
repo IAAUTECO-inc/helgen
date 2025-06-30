@@ -149,24 +149,29 @@ func BenchmarkHeadAppender_Append_Commit_ExistingSeries(b *testing.B) {
 	}
 }
 
-func populateTestWL(t testing.TB, w *wlog.WL, recs []interface{}) {
+func populateTestWL(t testing.TB, w *wlog.WL, recs []interface{}, buf []byte) []byte {
 	var enc record.Encoder
 	for _, r := range recs {
+		buf = buf[:0]
 		switch v := r.(type) {
 		case []record.RefSeries:
-			require.NoError(t, w.Log(enc.Series(v, nil)))
+			buf = enc.Series(v, buf)
 		case []record.RefSample:
-			require.NoError(t, w.Log(enc.Samples(v, nil)))
+			buf = enc.Samples(v, buf)
 		case []tombstones.Stone:
-			require.NoError(t, w.Log(enc.Tombstones(v, nil)))
+			buf = enc.Tombstones(v, buf)
 		case []record.RefExemplar:
-			require.NoError(t, w.Log(enc.Exemplars(v, nil)))
+			buf = enc.Exemplars(v, buf)
 		case []record.RefMmapMarker:
-			require.NoError(t, w.Log(enc.MmapMarkers(v, nil)))
+			buf = enc.MmapMarkers(v, buf)
 		case []record.RefMetadata:
-			require.NoError(t, w.Log(enc.Metadata(v, nil)))
+			buf = enc.Metadata(v, buf)
+		default:
+			continue
 		}
+		require.NoError(t, w.Log(buf))
 	}
+	return buf
 }
 
 func readTestWAL(t testing.TB, dir string) (recs []interface{}) {
@@ -309,15 +314,16 @@ func BenchmarkLoadWLs(b *testing.B) {
 
 						// Write series.
 						refSeries := make([]record.RefSeries, 0, c.seriesPerBatch)
+						var buf []byte
+						builder := labels.NewBuilder(labels.EmptyLabels())
+						for j := 1; j < labelsPerSeries; j++ {
+							builder.Set(defaultLabelName+strconv.Itoa(j), defaultLabelValue+strconv.Itoa(j))
+						}
 						for k := 0; k < c.batches; k++ {
 							refSeries = refSeries[:0]
 							for i := k * c.seriesPerBatch; i < (k+1)*c.seriesPerBatch; i++ {
-								lbls := make(map[string]string, labelsPerSeries)
-								lbls[defaultLabelName] = strconv.Itoa(i)
-								for j := 1; len(lbls) < labelsPerSeries; j++ {
-									lbls[defaultLabelName+strconv.Itoa(j)] = defaultLabelValue + strconv.Itoa(j)
-								}
-								refSeries = append(refSeries, record.RefSeries{Ref: chunks.HeadSeriesRef(i) * 101, Labels: labels.FromMap(lbls)})
+								builder.Set(defaultLabelName, strconv.Itoa(i))
+								refSeries = append(refSeries, record.RefSeries{Ref: chunks.HeadSeriesRef(i) * 101, Labels: builder.Labels()})
 							}
 
 							writeSeries := refSeries
@@ -333,7 +339,7 @@ func BenchmarkLoadWLs(b *testing.B) {
 								writeSeries = newWriteSeries
 							}
 
-							populateTestWL(b, wal, []interface{}{writeSeries})
+							buf = populateTestWL(b, wal, []interface{}{writeSeries}, buf)
 						}
 
 						// Write samples.
@@ -359,7 +365,7 @@ func BenchmarkLoadWLs(b *testing.B) {
 										V:   float64(i) * 100,
 									})
 								}
-								populateTestWL(b, wal, []interface{}{refSamples})
+								buf = populateTestWL(b, wal, []interface{}{refSamples}, buf)
 							}
 						}
 
@@ -398,7 +404,7 @@ func BenchmarkLoadWLs(b *testing.B) {
 										Labels: labels.FromStrings("trace_id", fmt.Sprintf("trace-%d", i)),
 									})
 								}
-								populateTestWL(b, wal, []interface{}{refExemplars})
+								buf = populateTestWL(b, wal, []interface{}{refExemplars}, buf)
 							}
 						}
 
@@ -427,10 +433,10 @@ func BenchmarkLoadWLs(b *testing.B) {
 									})
 								}
 								if shouldAddMarkers {
-									populateTestWL(b, wbl, []interface{}{refMarkers})
+									populateTestWL(b, wbl, []interface{}{refMarkers}, buf)
 								}
-								populateTestWL(b, wal, []interface{}{refSamples})
-								populateTestWL(b, wbl, []interface{}{refSamples})
+								buf = populateTestWL(b, wal, []interface{}{refSamples}, buf)
+								buf = populateTestWL(b, wbl, []interface{}{refSamples}, buf)
 							}
 						}
 
@@ -739,7 +745,7 @@ func TestHead_ReadWAL(t *testing.T) {
 				require.NoError(t, head.Close())
 			}()
 
-			populateTestWL(t, w, entries)
+			populateTestWL(t, w, entries, nil)
 
 			require.NoError(t, head.Init(math.MinInt64))
 			require.Equal(t, uint64(101), head.lastSeriesID.Load())
@@ -1210,7 +1216,7 @@ func TestHead_Truncate(t *testing.T) {
 			ss = map[string]struct{}{}
 			values[name] = ss
 		}
-		for _, value := range h.postings.LabelValues(ctx, name) {
+		for _, value := range h.postings.LabelValues(ctx, name, nil) {
 			ss[value] = struct{}{}
 		}
 	}
@@ -1463,7 +1469,7 @@ func TestHeadDeleteSeriesWithoutSamples(t *testing.T) {
 				require.NoError(t, head.Close())
 			}()
 
-			populateTestWL(t, w, entries)
+			populateTestWL(t, w, entries, nil)
 
 			require.NoError(t, head.Init(math.MinInt64))
 
@@ -3130,7 +3136,7 @@ func TestHeadLabelNamesValuesWithMinMaxRange(t *testing.T) {
 			require.Equal(t, tt.expectedNames, actualLabelNames)
 			if len(tt.expectedValues) > 0 {
 				for i, name := range expectedLabelNames {
-					actualLabelValue, err := headIdxReader.SortedLabelValues(ctx, name)
+					actualLabelValue, err := headIdxReader.SortedLabelValues(ctx, name, nil)
 					require.NoError(t, err)
 					require.Equal(t, []string{tt.expectedValues[i]}, actualLabelValue)
 				}
@@ -3203,11 +3209,11 @@ func TestHeadLabelValuesWithMatchers(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			headIdxReader := head.indexRange(0, 200)
 
-			actualValues, err := headIdxReader.SortedLabelValues(ctx, tt.labelName, tt.matchers...)
+			actualValues, err := headIdxReader.SortedLabelValues(ctx, tt.labelName, nil, tt.matchers...)
 			require.NoError(t, err)
 			require.Equal(t, tt.expectedValues, actualValues)
 
-			actualValues, err = headIdxReader.LabelValues(ctx, tt.labelName, tt.matchers...)
+			actualValues, err = headIdxReader.LabelValues(ctx, tt.labelName, nil, tt.matchers...)
 			sort.Strings(actualValues)
 			require.NoError(t, err)
 			require.Equal(t, tt.expectedValues, actualValues)
@@ -3466,7 +3472,7 @@ func BenchmarkHeadLabelValuesWithMatchers(b *testing.B) {
 	b.ReportAllocs()
 
 	for benchIdx := 0; benchIdx < b.N; benchIdx++ {
-		actualValues, err := headIdxReader.LabelValues(ctx, "b_tens", matchers...)
+		actualValues, err := headIdxReader.LabelValues(ctx, "b_tens", nil, matchers...)
 		require.NoError(b, err)
 		require.Len(b, actualValues, 9)
 	}
@@ -4660,7 +4666,7 @@ func testHistogramStaleSampleHelper(t *testing.T, floatHistogram bool) {
 		}
 
 		// We cannot compare StaleNAN with require.Equal, hence checking each histogram manually.
-		require.Equal(t, len(expHistograms), len(actHistograms))
+		require.Len(t, actHistograms, len(expHistograms))
 		actNumStale := 0
 		for i, eh := range expHistograms {
 			ah := actHistograms[i]
@@ -5298,7 +5304,7 @@ func TestChunkSnapshotTakenAfterIncompleteSnapshot(t *testing.T) {
 	// Verify the snapshot.
 	name, idx, offset, err := LastChunkSnapshot(dir)
 	require.NoError(t, err)
-	require.NotEqual(t, "", name)
+	require.NotEmpty(t, name)
 	require.Equal(t, 0, idx)
 	require.Positive(t, offset)
 }
@@ -6366,13 +6372,13 @@ func TestHeadCompactionWhileAppendAndCommitExemplar(t *testing.T) {
 
 func labelsWithHashCollision() (labels.Labels, labels.Labels) {
 	// These two series have the same XXHash; thanks to https://github.com/pstibrany/labels_hash_collisions
-	ls1 := labels.FromStrings("__name__", "metric", "lbl1", "value", "lbl2", "l6CQ5y")
-	ls2 := labels.FromStrings("__name__", "metric", "lbl1", "value", "lbl2", "v7uDlF")
+	ls1 := labels.FromStrings("__name__", "metric", "lbl", "HFnEaGl")
+	ls2 := labels.FromStrings("__name__", "metric", "lbl", "RqcXatm")
 
 	if ls1.Hash() != ls2.Hash() {
-		// These ones are the same when using -tags stringlabels
-		ls1 = labels.FromStrings("__name__", "metric", "lbl", "HFnEaGl")
-		ls2 = labels.FromStrings("__name__", "metric", "lbl", "RqcXatm")
+		// These ones are the same when using -tags slicelabels
+		ls1 = labels.FromStrings("__name__", "metric", "lbl1", "value", "lbl2", "l6CQ5y")
+		ls2 = labels.FromStrings("__name__", "metric", "lbl1", "value", "lbl2", "v7uDlF")
 	}
 
 	if ls1.Hash() != ls2.Hash() {
